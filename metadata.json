@@ -1,0 +1,6 @@
+{
+  "name": "CHANDRA TANI DESAKU",
+  "description": "Aplikasi Live Pertanian Terpadu untuk konsultasi agronomi suara & kamera real-time, deteksi penyakit tanaman, pemantauan sensor lahan & cuaca, serta manajemen panen dan harga komoditas desa.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

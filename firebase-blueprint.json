@@ -1,0 +1,293 @@
+{
+  "entities": {
+    "FarmerProfile": {
+      "title": "FarmerProfile",
+      "description": "Profil petani desa dan informasi kelompok tani yang terdaftar",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID autentikasi pengguna"
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nama lengkap petani"
+        },
+        "villageName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nama desa atau kecamatan"
+        },
+        "farmerGroup": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nama Kelompok Tani (Gapoktan)"
+        },
+        "mainCommodity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Komoditas utama yang ditanam"
+        },
+        "totalAreaHa": {
+          "type": "number",
+          "description": "Total luas lahan garapan dalam Hektar"
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Nomor WhatsApp / telepon petani"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan profil"
+        }
+      },
+      "required": [
+        "userId",
+        "fullName",
+        "villageName",
+        "farmerGroup",
+        "mainCommodity",
+        "totalAreaHa",
+        "phone",
+        "updatedAt"
+      ]
+    },
+    "FieldBlock": {
+      "title": "FieldBlock",
+      "description": "Data petak lahan sawah atau kebun beserta telemetri sensor tanah dan irigasi",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID pemilik lahan"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nama petak atau blok lahan"
+        },
+        "farmer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nama pengelola lahan"
+        },
+        "crop": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Komoditas tanaman pada blok"
+        },
+        "areaHa": {
+          "type": "number",
+          "description": "Luas petak lahan (Ha)"
+        },
+        "hst": {
+          "type": "number",
+          "description": "Umur tanaman dalam Hari Setelah Tanam (HST)"
+        },
+        "soilMoisture": {
+          "type": "number",
+          "description": "Kelembapan tanah (%)"
+        },
+        "soilPh": {
+          "type": "number",
+          "description": "pH tanah"
+        },
+        "soilTemp": {
+          "type": "number",
+          "description": "Suhu tanah (°C)"
+        },
+        "nitrogen": {
+          "type": "number",
+          "description": "Kadar Nitrogen (ppm)"
+        },
+        "phosphorus": {
+          "type": "number",
+          "description": "Kadar Fosfor (ppm)"
+        },
+        "potassium": {
+          "type": "number",
+          "description": "Kadar Kalium (ppm)"
+        },
+        "irrigationOpen": {
+          "type": "boolean",
+          "description": "Status pintu air irigasi"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembaruan sensor"
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "farmer",
+        "crop",
+        "areaHa",
+        "hst",
+        "soilMoisture",
+        "soilPh",
+        "soilTemp",
+        "nitrogen",
+        "phosphorus",
+        "potassium",
+        "irrigationOpen",
+        "updatedAt"
+      ]
+    },
+    "HarvestRecord": {
+      "title": "HarvestRecord",
+      "description": "Catatan timbangan hasil panen dan nilai transaksi petani",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID petani pencatat"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "description": "Tanggal panen YYYY-MM-DD"
+        },
+        "farmerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Nama petani"
+        },
+        "blockName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nama blok lahan"
+        },
+        "commodity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nama komoditas panen"
+        },
+        "weightKg": {
+          "type": "number",
+          "description": "Bobot panen dalam Kg"
+        },
+        "pricePerKg": {
+          "type": "number",
+          "description": "Harga jual per Kg dalam Rupiah"
+        },
+        "buyerStatus": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Status pembeli / koperasi"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pencatatan server"
+        }
+      },
+      "required": [
+        "userId",
+        "date",
+        "farmerName",
+        "blockName",
+        "commodity",
+        "weightKg",
+        "pricePerKg",
+        "buyerStatus",
+        "createdAt"
+      ]
+    },
+    "ActivityHistory": {
+      "title": "ActivityHistory",
+      "description": "Riwayat hasil diagnosis penyakit daun, sesi LIVE Video Call, dan konsultasi agronomi",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID petani"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["live_call", "diagnosis_daun", "sensor_lahan", "panen"],
+          "maxLength": 40,
+          "description": "Kategori aktivitas"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Judul aktivitas atau nama penyakit"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Ringkasan hasil diagnosis atau transkrip"
+        },
+        "cropName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Komoditas terkait"
+        },
+        "severity": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Tingkat keparahan atau status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pencatatan"
+        }
+      },
+      "required": [
+        "userId",
+        "category",
+        "title",
+        "summary",
+        "cropName",
+        "severity",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/FarmerProfile" },
+      "description": "Dokumen profil petani yang terisolasi per userId"
+    },
+    "/field_blocks/{blockId}": {
+      "schema": { "$ref": "#/entities/FieldBlock" },
+      "description": "Koleksi petak lahan dan sensor milik petani"
+    },
+    "/harvest_records/{harvestId}": {
+      "schema": { "$ref": "#/entities/HarvestRecord" },
+      "description": "Koleksi buku besar hasil panen milik petani"
+    },
+    "/activity_history/{historyId}": {
+      "schema": { "$ref": "#/entities/ActivityHistory" },
+      "description": "Koleksi riwayat diagnosis penyakit daun dan sesi LIVE Video Call milik petani"
+    }
+  }
+}

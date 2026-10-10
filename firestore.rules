@@ -1,0 +1,249 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 1. Validation Helper: FarmerProfile (/users/{userId})
+    function isValidFarmerProfile(data) {
+      return data.keys().hasAll([
+        'userId',
+        'fullName',
+        'villageName',
+        'farmerGroup',
+        'mainCommodity',
+        'totalAreaHa',
+        'phone',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId',
+        'fullName',
+        'villageName',
+        'farmerGroup',
+        'mainCommodity',
+        'totalAreaHa',
+        'phone',
+        'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+      data.villageName is string && data.villageName.size() >= 1 && data.villageName.size() <= 100 &&
+      data.farmerGroup is string && data.farmerGroup.size() >= 1 && data.farmerGroup.size() <= 120 &&
+      data.mainCommodity is string && data.mainCommodity.size() >= 1 && data.mainCommodity.size() <= 120 &&
+      data.totalAreaHa is number && data.totalAreaHa >= 0 && data.totalAreaHa <= 10000 &&
+      data.phone is string && data.phone.size() <= 40 &&
+      data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    // 2. Validation Helper: FieldBlock (/field_blocks/{blockId})
+    function isValidFieldBlock(data) {
+      return data.keys().hasAll([
+        'userId',
+        'name',
+        'farmer',
+        'crop',
+        'areaHa',
+        'hst',
+        'soilMoisture',
+        'soilPh',
+        'soilTemp',
+        'nitrogen',
+        'phosphorus',
+        'potassium',
+        'irrigationOpen',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId',
+        'name',
+        'farmer',
+        'crop',
+        'areaHa',
+        'hst',
+        'soilMoisture',
+        'soilPh',
+        'soilTemp',
+        'nitrogen',
+        'phosphorus',
+        'potassium',
+        'irrigationOpen',
+        'updatedAt'
+      ]) &&
+      data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+      data.farmer is string && data.farmer.size() >= 1 && data.farmer.size() <= 100 &&
+      data.crop is string && data.crop.size() >= 1 && data.crop.size() <= 100 &&
+      data.areaHa is number && data.areaHa >= 0 && data.areaHa <= 10000 &&
+      data.hst is number && data.hst >= 0 && data.hst <= 1000 &&
+      data.soilMoisture is number && data.soilMoisture >= 0 && data.soilMoisture <= 100 &&
+      data.soilPh is number && data.soilPh >= 0 && data.soilPh <= 14 &&
+      data.soilTemp is number && data.soilTemp >= -10 && data.soilTemp <= 70 &&
+      data.nitrogen is number && data.nitrogen >= 0 && data.nitrogen <= 5000 &&
+      data.phosphorus is number && data.phosphorus >= 0 && data.phosphorus <= 5000 &&
+      data.potassium is number && data.potassium >= 0 && data.potassium <= 5000 &&
+      data.irrigationOpen is bool &&
+      data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    // 3. Validation Helper: HarvestRecord (/harvest_records/{harvestId})
+    function isValidHarvestRecord(data) {
+      return data.keys().hasAll([
+        'userId',
+        'date',
+        'farmerName',
+        'blockName',
+        'commodity',
+        'weightKg',
+        'pricePerKg',
+        'buyerStatus',
+        'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId',
+        'date',
+        'farmerName',
+        'blockName',
+        'commodity',
+        'weightKg',
+        'pricePerKg',
+        'buyerStatus',
+        'createdAt'
+      ]) &&
+      data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.date is string && data.date.size() >= 1 && data.date.size() <= 30 &&
+      data.farmerName is string && data.farmerName.size() >= 1 && data.farmerName.size() <= 100 &&
+      data.blockName is string && data.blockName.size() >= 1 && data.blockName.size() <= 120 &&
+      data.commodity is string && data.commodity.size() >= 1 && data.commodity.size() <= 120 &&
+      data.weightKg is number && data.weightKg > 0 && data.weightKg <= 1000000 &&
+      data.pricePerKg is number && data.pricePerKg >= 0 && data.pricePerKg <= 10000000 &&
+      data.buyerStatus is string && data.buyerStatus.size() >= 1 && data.buyerStatus.size() <= 120 &&
+      data.createdAt is timestamp && data.createdAt == request.time;
+    }
+
+    // 4. Validation Helper: ActivityHistory (/activity_history/{historyId})
+    function isValidActivityHistory(data) {
+      return data.keys().hasAll([
+        'userId',
+        'category',
+        'title',
+        'summary',
+        'cropName',
+        'severity',
+        'createdAt'
+      ]) &&
+      data.keys().hasOnly([
+        'userId',
+        'category',
+        'title',
+        'summary',
+        'cropName',
+        'severity',
+        'createdAt'
+      ]) &&
+      data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 && data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+      data.category is string && data.category.size() <= 40 && data.category in ['live_call', 'diagnosis_daun', 'sensor_lahan', 'panen'] &&
+      data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+      data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 2000 &&
+      data.cropName is string && data.cropName.size() <= 120 &&
+      data.severity is string && data.severity.size() <= 40 &&
+      data.createdAt is timestamp && data.createdAt == request.time;
+    }
+
+    // Collection 1: /users/{userId} (PII Isolated to Owner Only)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidFarmerProfile(incoming());
+      allow update: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidFarmerProfile(incoming()) && (
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'fullName',
+          'villageName',
+          'farmerGroup',
+          'mainCommodity',
+          'totalAreaHa',
+          'phone',
+          'updatedAt'
+        ])
+      );
+      allow delete: if false;
+    }
+
+    // Collection 2: /field_blocks/{blockId}
+    match /field_blocks/{blockId} {
+      allow get: if isSignedIn() && isValidId(blockId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(blockId) && isValidFieldBlock(incoming());
+      allow update: if isSignedIn() && isValidId(blockId) && isValidFieldBlock(incoming()) && (
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name',
+          'farmer',
+          'crop',
+          'areaHa',
+          'hst',
+          'soilMoisture',
+          'soilPh',
+          'soilTemp',
+          'nitrogen',
+          'phosphorus',
+          'potassium',
+          'irrigationOpen',
+          'updatedAt'
+        ])
+      );
+      allow delete: if isSignedIn() && isValidId(blockId) && existing().userId == request.auth.uid;
+    }
+
+    // Collection 3: /harvest_records/{harvestId}
+    match /harvest_records/{harvestId} {
+      allow get: if isSignedIn() && isValidId(harvestId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(harvestId) && isValidHarvestRecord(incoming());
+      allow update: if isSignedIn() && isValidId(harvestId) && isValidHarvestRecord(incoming()) && (
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'date',
+          'farmerName',
+          'blockName',
+          'commodity',
+          'weightKg',
+          'pricePerKg',
+          'buyerStatus'
+        ])
+      );
+      allow delete: if isSignedIn() && isValidId(harvestId) && existing().userId == request.auth.uid;
+    }
+
+    // Collection 4: /activity_history/{historyId}
+    match /activity_history/{historyId} {
+      allow get: if isSignedIn() && isValidId(historyId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(historyId) && isValidActivityHistory(incoming());
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(historyId) && existing().userId == request.auth.uid;
+    }
+  }
+}
