@@ -115,7 +115,7 @@ export default function FarmerProfileView({
             </div>
             <h2 className="text-xl font-extrabold text-[#0F3820] mt-0.5">{fullName}</h2>
             <p className="text-xs text-slate-500">
-              {currentUser?.email || "Belum terhubung ke akun Google"}
+              {currentUser?.email || "Akun Email Petani"}
             </p>
           </div>
         </div>

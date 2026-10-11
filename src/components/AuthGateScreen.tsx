@@ -1,5 +1,9 @@
 import React, { useState } from "react";
-import { signInWithPopup } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+} from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import {
   Leaf,
@@ -9,12 +13,46 @@ import {
   ArrowRight,
   Lock,
   CheckCircle2,
+  Mail,
+  Eye,
+  EyeOff,
 } from "lucide-react";
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from "../firebase";
+import { auth, db, handleFirestoreError, OperationType } from "../firebase";
 import heroPetaniImg from "../assets/images/hero_petani_sawah_1791604669532.jpg";
+
+function formatAuthErrorMessage(err: any): string {
+  const code = String(err?.code || "");
+  if (
+    code === "auth/invalid-credential" ||
+    code === "auth/wrong-password" ||
+    code === "auth/user-not-found"
+  ) {
+    return "Email atau kata sandi yang Anda masukkan belum sesuai. Silakan periksa kembali atau pilih tab Daftar Baru (Sign Up) jika belum memiliki akun.";
+  }
+  if (code === "auth/email-already-in-use") {
+    return "Alamat email ini sudah terdaftar. Silakan gunakan tab Masuk (Login) untuk masuk ke akun Anda.";
+  }
+  if (code === "auth/weak-password") {
+    return "Kata sandi terlalu singkat. Gunakan minimal 6 karakter.";
+  }
+  if (code === "auth/invalid-email") {
+    return "Format alamat email tidak valid. Contoh yang benar: petani@desa.id";
+  }
+  if (code === "auth/too-many-requests") {
+    return "Terlalu banyak percobaan gagal. Silakan tunggu beberapa saat lalu coba kembali.";
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "Metode login Email & Kata Sandi belum diaktifkan di Firebase Console (Authentication → Sign-in method → Email/Password → Enable).";
+  }
+  return err?.message || "Gagal memproses autentikasi. Silakan coba kembali.";
+}
 
 export default function AuthGateScreen() {
   const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
   const [fullName, setFullName] = useState("");
   const [villageName, setVillageName] = useState("Desa Sukamaju");
   const [farmerGroup, setFarmerGroup] = useState("Kelompok Tani Makmur");
@@ -24,14 +62,33 @@ export default function AuthGateScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleGoogleAuth = async (e: React.FormEvent) => {
+  const handleEmailPasswordAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErrorMsg("Mohon isi alamat email Anda.");
+      return;
+    }
+    if (password.length < 6) {
+      setErrorMsg("Kata sandi harus terdiri dari minimal 6 karakter.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const user = cred.user;
+      let user;
+      if (mode === "signup") {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        user = cred.user;
+        const safeDisplayName = (fullName.trim() || "Petani Desa").slice(0, 100);
+        await updateProfile(user, { displayName: safeDisplayName }).catch(() => {});
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        user = cred.user;
+      }
 
       const userDocRef = doc(db, "users", user.uid);
       let existingSnap;
@@ -42,10 +99,11 @@ export default function AuthGateScreen() {
       }
 
       if (!existingSnap?.exists() || mode === "signup") {
+        const emailPrefix = cleanEmail.split("@")[0] || "Petani Desa";
         const safeName = (
           fullName.trim() ||
           user.displayName ||
-          "Petani Hebat"
+          emailPrefix
         ).slice(0, 100);
         const safeVillage = (villageName.trim() || "Desa Sukamaju").slice(0, 100);
         const safeGroup = (farmerGroup.trim() || "Kelompok Tani Desa").slice(0, 120);
@@ -71,10 +129,7 @@ export default function AuthGateScreen() {
         }
       }
     } catch (err: any) {
-      setErrorMsg(
-        err?.message ||
-          "Gagal masuk dengan akun Google. Pastikan jendela pop-up browser tidak diblokir."
-      );
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -122,7 +177,7 @@ export default function AuthGateScreen() {
               Halo, Petani!
             </h1>
             <p className="text-xs sm:text-sm text-emerald-100/90 leading-relaxed">
-              Solusi konsultasi pertanian kini lebih mudah melalui panggilan video langsung. Silakan masuk (Login) atau daftar akun terlebih dahulu.
+              Solusi konsultasi pertanian kini lebih mudah melalui panggilan video langsung. Silakan masuk (Login) atau daftar akun menggunakan Email &amp; Kata Sandi Anda.
             </p>
           </div>
 
@@ -142,9 +197,9 @@ export default function AuthGateScreen() {
           </div>
         </div>
 
-        {/* Kolom Formulir Login & Sign Up (7 Kolom di Desktop) */}
+        {/* Kolom Formulir Login & Sign Up dengan Email dan Kata Sandi (7 Kolom di Desktop) */}
         <div className="lg:col-span-7 p-6 sm:p-9 flex flex-col justify-center">
-          <div className="mb-6">
+          <div className="mb-5">
             <h2 className="text-2xl font-extrabold text-[#0F3820] font-display">
               {mode === "login"
                 ? "Masuk ke Akun Petani Anda"
@@ -152,13 +207,13 @@ export default function AuthGateScreen() {
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 mt-1">
               {mode === "login"
-                ? "Gunakan akun Google Anda untuk membuka seluruh menu layanan pertanian desa."
-                : "Lengkapi data kelompok tani dan lahan Anda, lalu hubungkan dengan akun Google."}
+                ? "Masukkan alamat Email dan Kata Sandi Anda untuk membuka layanan pertanian desa."
+                : "Daftarkan Email, Kata Sandi, serta data kelompok tani dan lahan Anda."}
             </p>
           </div>
 
           {/* Pilihan Mode Login / Daftar */}
-          <div className="grid grid-cols-2 gap-2 p-1.5 bg-[#EFF8EC] border border-[#D3E8CC] rounded-2xl mb-6">
+          <div className="grid grid-cols-2 gap-2 p-1.5 bg-[#EFF8EC] border border-[#D3E8CC] rounded-2xl mb-5">
             <button
               type="button"
               onClick={() => {
@@ -190,12 +245,64 @@ export default function AuthGateScreen() {
           </div>
 
           {errorMsg && (
-            <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800">
+            <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 leading-relaxed">
               {errorMsg}
             </div>
           )}
 
-          <form onSubmit={handleGoogleAuth} className="space-y-4">
+          <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
+            {/* Input Email & Kata Sandi (Tampil di Login maupun Sign Up) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div className={mode === "login" ? "sm:col-span-2" : ""}>
+                <label className="block text-xs font-bold text-[#0F3820] mb-1">
+                  Alamat Email
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="email"
+                    required
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-[#F7FAF5] border border-[#CDE3C6] rounded-xl focus:outline-none focus:border-[#145A2B]"
+                  />
+                </div>
+              </div>
+
+              <div className={mode === "login" ? "sm:col-span-2" : ""}>
+                <label className="block text-xs font-bold text-[#0F3820] mb-1">
+                  Kata Sandi (Password)
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Minimal 6 karakter"
+                    className="w-full pl-10 pr-10 py-2.5 text-sm bg-[#F7FAF5] border border-[#CDE3C6] rounded-xl focus:outline-none focus:border-[#145A2B]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    aria-label={showPassword ? "Sembunyikan Kata Sandi" : "Tampilkan Kata Sandi"}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#145A2B] cursor-pointer"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
             {mode === "signup" ? (
               <>
                 <div>
@@ -287,13 +394,13 @@ export default function AuthGateScreen() {
                 </div>
               </>
             ) : (
-              <div className="p-4 sm:p-5 rounded-2xl bg-[#F2F9F0] border border-[#D3E8CC] space-y-2.5 text-xs sm:text-sm text-[#1E4628]">
-                <div className="flex items-center gap-2 font-bold text-[#0F3820] text-sm sm:text-base">
-                  <ShieldCheck className="w-5 h-5 text-[#1B6B2F] shrink-0" />
-                  <span>Keamanan Data &amp; Sinkronisasi Cloud Desa</span>
+              <div className="p-4 rounded-2xl bg-[#F2F9F0] border border-[#D3E8CC] space-y-2 text-xs text-[#1E4628]">
+                <div className="flex items-center gap-2 font-bold text-[#0F3820] text-sm">
+                  <ShieldCheck className="w-4 h-4 text-[#1B6B2F] shrink-0" />
+                  <span>Keamanan Akun &amp; Sinkronisasi Database Desa</span>
                 </div>
                 <p className="leading-relaxed">
-                  Seluruh data aktivitas Anda—mulai dari percakapan <strong>LIVE Video Call</strong>, hasil <strong>Diagnosis Daun</strong>, telemetri <strong>Sensor Lahan</strong>, hingga <strong>Buku Panen</strong>—tersimpan aman di akun pribadi Anda dan tidak tercampur dengan pengguna lain.
+                  Seluruh riwayat konsultasi <strong>LIVE VIDEO CALL</strong>, percakapan <strong>Live Chat</strong>, dan profil petani tersimpan aman di akun Email pribadi Anda.
                 </p>
               </div>
             )}
@@ -309,7 +416,7 @@ export default function AuthGateScreen() {
                   <span>
                     {isSubmitting
                       ? "Mendaftarkan Akun Petani..."
-                      : "Daftar Sekarang & Masuk dengan Google"}
+                      : "Daftar Akun Petani (Sign Up)"}
                   </span>
                 </>
               ) : (
@@ -317,8 +424,8 @@ export default function AuthGateScreen() {
                   <UserCheck className="w-4 h-4" />
                   <span>
                     {isSubmitting
-                      ? "Memverifikasi Akun..."
-                      : "Masuk (Login) dengan Akun Google"}
+                      ? "Memverifikasi Email & Kata Sandi..."
+                      : "Masuk ke Aplikasi (Login)"}
                   </span>
                 </>
               )}

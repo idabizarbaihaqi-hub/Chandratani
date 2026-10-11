@@ -1,8 +1,23 @@
 import React, { useState } from "react";
-import { signInWithPopup } from "firebase/auth";
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+} from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
-import { Leaf, ShieldCheck, Sprout, UserCheck, X, ArrowRight } from "lucide-react";
-import { auth, db, googleProvider, handleFirestoreError, OperationType } from "../firebase";
+import {
+  Leaf,
+  ShieldCheck,
+  Sprout,
+  UserCheck,
+  X,
+  ArrowRight,
+  Mail,
+  Lock,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import { auth, db, handleFirestoreError, OperationType } from "../firebase";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -10,8 +25,36 @@ interface AuthModalProps {
   onSuccess: () => void;
 }
 
+function formatAuthErrorMessage(err: any): string {
+  const code = String(err?.code || "");
+  if (
+    code === "auth/invalid-credential" ||
+    code === "auth/wrong-password" ||
+    code === "auth/user-not-found"
+  ) {
+    return "Email atau kata sandi belum sesuai. Silakan periksa kembali atau daftar akun baru.";
+  }
+  if (code === "auth/email-already-in-use") {
+    return "Alamat email ini sudah terdaftar. Silakan masuk melalui tab Masuk Akun (Login).";
+  }
+  if (code === "auth/weak-password") {
+    return "Kata sandi minimal harus 6 karakter.";
+  }
+  if (code === "auth/invalid-email") {
+    return "Format alamat email tidak valid.";
+  }
+  if (code === "auth/operation-not-allowed") {
+    return "Metode login Email & Kata Sandi perlu diaktifkan di Firebase Console (Authentication → Sign-in method → Email/Password).";
+  }
+  return err?.message || "Gagal memproses login. Silakan coba kembali.";
+}
+
 export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
   const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
   const [fullName, setFullName] = useState("");
   const [villageName, setVillageName] = useState("Desa Sukamaju");
   const [farmerGroup, setFarmerGroup] = useState("Kelompok Tani Makmur");
@@ -23,14 +66,33 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
 
   if (!isOpen) return null;
 
-  const handleGoogleAuth = async (e: React.FormEvent) => {
+  const handleEmailPasswordAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErrorMsg("Mohon isi alamat email Anda.");
+      return;
+    }
+    if (password.length < 6) {
+      setErrorMsg("Kata sandi minimal 6 karakter.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const cred = await signInWithPopup(auth, googleProvider);
-      const user = cred.user;
+      let user;
+      if (mode === "signup") {
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        user = cred.user;
+        const safeDisplayName = (fullName.trim() || "Petani Desa").slice(0, 100);
+        await updateProfile(user, { displayName: safeDisplayName }).catch(() => {});
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        user = cred.user;
+      }
 
       const userDocRef = doc(db, "users", user.uid);
       let existingSnap;
@@ -41,10 +103,18 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
       }
 
       if (!existingSnap?.exists() || mode === "signup") {
-        const safeName = (fullName.trim() || user.displayName || "Petani Hebat").slice(0, 100);
+        const emailPrefix = cleanEmail.split("@")[0] || "Petani Desa";
+        const safeName = (
+          fullName.trim() ||
+          user.displayName ||
+          emailPrefix
+        ).slice(0, 100);
         const safeVillage = (villageName.trim() || "Desa Sukamaju").slice(0, 100);
         const safeGroup = (farmerGroup.trim() || "Kelompok Tani Desa").slice(0, 120);
-        const safeCommodity = (mainCommodity.trim() || "Padi & Hortikultura").slice(0, 120);
+        const safeCommodity = (mainCommodity.trim() || "Padi & Hortikultura").slice(
+          0,
+          120
+        );
         const safePhone = (phone.trim() || "-").slice(0, 40);
         const safeArea = Math.max(0, Math.min(10000, Number(totalAreaHa) || 1));
 
@@ -67,9 +137,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
       onSuccess();
       onClose();
     } catch (err: any) {
-      setErrorMsg(
-        err?.message || "Gagal masuk dengan akun Google. Pastikan jendela pop-up diizinkan."
-      );
+      setErrorMsg(formatAuthErrorMessage(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -96,7 +164,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
               CHANDRA Tani Desaku
             </h2>
             <p className="text-xs text-[#2E5A36]">
-              Akses Database Permanen Kelompok Tani Desa
+              Login &amp; Pendaftaran Akun Email Petani
             </p>
           </div>
         </div>
@@ -105,7 +173,10 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
         <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#EFF8EC] border border-[#D3E8CC] rounded-xl mb-5">
           <button
             type="button"
-            onClick={() => setMode("login")}
+            onClick={() => {
+              setMode("login");
+              setErrorMsg(null);
+            }}
             className={`py-2 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
               mode === "login"
                 ? "bg-[#145A2B] text-white shadow-xs"
@@ -116,7 +187,10 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           </button>
           <button
             type="button"
-            onClick={() => setMode("signup")}
+            onClick={() => {
+              setMode("signup");
+              setErrorMsg(null);
+            }}
             className={`py-2 text-xs font-bold rounded-lg transition-colors cursor-pointer ${
               mode === "signup"
                 ? "bg-[#145A2B] text-white shadow-xs"
@@ -133,7 +207,53 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
           </div>
         )}
 
-        <form onSubmit={handleGoogleAuth} className="space-y-3.5">
+        <form onSubmit={handleEmailPasswordAuth} className="space-y-3.5">
+          <div>
+            <label className="block text-xs font-bold text-[#0F3820] mb-1">
+              Alamat Email
+            </label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="nama@email.com"
+                className="w-full pl-10 pr-3.5 py-2 text-sm bg-[#F7FAF5] border border-[#CDE3C6] rounded-xl focus:outline-none focus:border-[#145A2B]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-[#0F3820] mb-1">
+              Kata Sandi (Password)
+            </label>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Minimal 6 karakter"
+                className="w-full pl-10 pr-10 py-2 text-sm bg-[#F7FAF5] border border-[#CDE3C6] rounded-xl focus:outline-none focus:border-[#145A2B]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#145A2B] cursor-pointer"
+              >
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+          </div>
+
           {mode === "signup" ? (
             <>
               <div>
@@ -231,7 +351,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
                 <span>Sinkronisasi Cloud Firebase Otomatis</span>
               </div>
               <p className="leading-relaxed">
-                Masuk dengan akun Google Anda untuk mengakses kembali seluruh catatan panen, riwayat diagnosis daun, dan pengaturan sensor blok lahan dari HP maupun laptop mana saja.
+                Masuk dengan Email dan Kata Sandi Anda untuk mengakses kembali seluruh riwayat konsultasi dan profil petani Anda.
               </p>
             </div>
           )}
@@ -246,15 +366,15 @@ export default function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps
                 <Sprout className="w-4 h-4" />
                 <span>
                   {isSubmitting
-                    ? "Mendaftarkan Profil Petani..."
-                    : "Daftar & Hubungkan Akun Google"}
+                    ? "Mendaftarkan Akun Petani..."
+                    : "Daftar Akun Petani (Sign Up)"}
                 </span>
               </>
             ) : (
               <>
                 <UserCheck className="w-4 h-4" />
                 <span>
-                  {isSubmitting ? "Menghubungkan..." : "Masuk dengan Akun Google"}
+                  {isSubmitting ? "Memverifikasi..." : "Masuk (Login)"}
                 </span>
               </>
             )}
