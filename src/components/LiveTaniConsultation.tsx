@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Camera,
   CameraOff,
+  Eye,
   Mic,
   MicOff,
   PhoneOff,
@@ -53,7 +54,6 @@ export default function LiveTaniConsultation({
   onEndCall,
   onSaveActivity,
 }: LiveTaniConsultationProps) {
-  // Honest separated states:
   // 1. Local hardware camera/mic state
   const [cameraPermissionState, setCameraPermissionState] = useState<
     "requesting" | "granted" | "denied"
@@ -64,13 +64,17 @@ export default function LiveTaniConsultation({
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
 
-  // 2. Two-way Advisor connection state
+  // 2. Advisor connection & live camera vision state
   const [advisorConnectionState, setAdvisorConnectionState] = useState<
-    "searching" | "connected" | "local_only"
+    "searching" | "connected" | "serverless_vision"
   >("searching");
   const [advisorStatusNote, setAdvisorStatusNote] = useState<string>(
-    "Menunggu penyuluh terhubung..."
+    "Menghubungkan kamera & suara ke Pak Chandra..."
   );
+  const [cameraObservation, setCameraObservation] = useState<string>(
+    "Menyiapkan penglihatan kamera..."
+  );
+  const [isInspectingCamera, setIsInspectingCamera] = useState<boolean>(false);
 
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [framesSent, setFramesSent] = useState(0);
@@ -85,12 +89,17 @@ export default function LiveTaniConsultation({
   const nextStartTimeRef = useRef<number>(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const frameIntervalRef = useRef<number | null>(null);
+  const initialVisionTimerRef = useRef<number | null>(null);
+  const speechRecRef = useRef<any>(null);
 
   const isMicMutedRef = useRef<boolean>(false);
   const isCameraActiveRef = useRef<boolean>(true);
   const isSpeakerOnRef = useRef<boolean>(true);
   const transcriptsRef = useRef<TranscriptEntry[]>([]);
   const framesSentRef = useRef<number>(0);
+  const advisorConnectionStateRef = useRef<"searching" | "connected" | "serverless_vision">(
+    "searching"
+  );
 
   useEffect(() => {
     isMicMutedRef.current = isMicMuted;
@@ -104,6 +113,9 @@ export default function LiveTaniConsultation({
     isSpeakerOnRef.current = isSpeakerOn;
     if (!isSpeakerOn) {
       stopAllPlayback();
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
     }
   }, [isSpeakerOn]);
 
@@ -114,6 +126,10 @@ export default function LiveTaniConsultation({
   useEffect(() => {
     framesSentRef.current = framesSent;
   }, [framesSent]);
+
+  useEffect(() => {
+    advisorConnectionStateRef.current = advisorConnectionState;
+  }, [advisorConnectionState]);
 
   const stopAllPlayback = () => {
     activeSourcesRef.current.forEach((src) => {
@@ -129,10 +145,27 @@ export default function LiveTaniConsultation({
     }
   };
 
+  const speakTextFallback = (text: string) => {
+    if (!isSpeakerOnRef.current || !("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = "id-ID";
+      utterance.rate = 1.0;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // ignore
+    }
+  };
+
   const playAudioChunk24k = (base64Pcm: string) => {
     if (!isSpeakerOnRef.current) return;
     const ctx = outputAudioCtxRef.current;
     if (!ctx) return;
+
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
 
     const binary = atob(base64Pcm);
     const bytes = new Uint8Array(binary.length);
@@ -167,10 +200,165 @@ export default function LiveTaniConsultation({
     };
   };
 
+  /**
+   * Captures current JPEG frame from <video> element reliably.
+   */
+  const captureCurrentVideoFrameBase64 = (): string | null => {
+    if (!isCameraActiveRef.current || !videoRef.current || !canvasRef.current) {
+      return null;
+    }
+    const video = videoRef.current;
+    const rawW = video.videoWidth || 640;
+    const rawH = video.videoHeight || 480;
+    if (video.readyState < 2) return null;
+
+    const canvas = canvasRef.current;
+    canvas.width = 640;
+    canvas.height = Math.max(360, Math.round((rawH / rawW) * 640));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
+    return dataUrl.split(",")[1] || null;
+  };
+
+  /**
+   * Sends frame directly to /api/live-vision-call (works on both Vercel Serverless and Node server)
+   * and optionally speaks the response if WebSocket Live audio is not active.
+   */
+  const inspectCameraNow = async (customQuestion?: string, forceSpeakHttp?: boolean) => {
+    const base64Jpeg = captureCurrentVideoFrameBase64();
+    if (!base64Jpeg || isInspectingCamera) return;
+
+    setIsInspectingCamera(true);
+    setFramesSent((prev) => prev + 1);
+
+    // If WebSocket to Gemini Live is open and not forcing HTTP, ask server to inspect and speak via Live API
+    if (
+      wsRef.current &&
+      wsRef.current.readyState === WebSocket.OPEN &&
+      advisorConnectionStateRef.current === "connected" &&
+      !forceSpeakHttp
+    ) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "inspect_frame_now",
+          data: base64Jpeg,
+          question:
+            customQuestion ||
+            "Pak Chandra, tolong lihat kamera saya sekarang. Apa yang terlihat di kamera dan bagaimana saran pertaniannya?",
+        })
+      );
+      setTimeout(() => setIsInspectingCamera(false), 1800);
+      return;
+    }
+
+    // Serverless / HTTP Direct Vision Call (100% compatible with Vercel deployment!)
+    try {
+      const res = await fetch("/api/live-vision-call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: base64Jpeg,
+          question:
+            customQuestion ||
+            "Jelaskan apa yang tampak di kamera saya saat ini dan berikan saran pertaniannya.",
+        }),
+      });
+      const data = await res.json();
+      if (data.visualObservation) {
+        setCameraObservation(data.visualObservation);
+      }
+      if (data.spokenResponse) {
+        const nowTime = new Date().toLocaleTimeString("id-ID", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        setTranscripts((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-vision`,
+            role: "penyuluh",
+            text: data.spokenResponse,
+            timestamp: nowTime,
+          },
+        ]);
+        // Speak out loud if in Serverless mode or if requested
+        if (advisorConnectionStateRef.current !== "connected" || forceSpeakHttp) {
+          speakTextFallback(data.spokenResponse);
+        }
+      }
+    } catch {
+      // ignore transient error
+    } finally {
+      setIsInspectingCamera(false);
+    }
+  };
+
+  /**
+   * Starts browser SpeechRecognition when running in Serverless mode (e.g. on Vercel)
+   * so the farmer can talk hands-free and Pak Chandra answers with live camera vision.
+   */
+  const startServerlessSpeechRecognition = () => {
+    const SpeechRec =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec || speechRecRef.current) return;
+
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = "id-ID";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+
+      recognition.onresult = (event: any) => {
+        if (isMicMutedRef.current) return;
+        const lastIdx = event.results.length - 1;
+        const transcriptText = event.results[lastIdx]?.[0]?.transcript?.trim();
+        if (transcriptText) {
+          setTranscripts((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-user-sr`,
+              role: "petani",
+              text: transcriptText,
+              timestamp: new Date().toLocaleTimeString("id-ID", {
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            },
+          ]);
+          inspectCameraNow(transcriptText, true);
+        }
+      };
+
+      recognition.onerror = () => {};
+      recognition.start();
+      speechRecRef.current = recognition;
+    } catch {
+      // ignore if browser doesn't support SpeechRecognition
+    }
+  };
+
   const stopAllMediaAndSocket = () => {
     if (frameIntervalRef.current) {
       clearInterval(frameIntervalRef.current);
       frameIntervalRef.current = null;
+    }
+    if (initialVisionTimerRef.current) {
+      clearTimeout(initialVisionTimerRef.current);
+      initialVisionTimerRef.current = null;
+    }
+    if (speechRecRef.current) {
+      try {
+        speechRecRef.current.stop();
+      } catch {
+        // ignore
+      }
+      speechRecRef.current = null;
+    }
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
     }
 
     if (wsRef.current) {
@@ -203,7 +391,7 @@ export default function LiveTaniConsultation({
     setCameraPermissionState("requesting");
     setCameraErrorDetail(null);
     setAdvisorConnectionState("searching");
-    setAdvisorStatusNote("Mencari penyuluh...");
+    setAdvisorStatusNote("Menghubungkan kamera & suara ke Pak Chandra...");
 
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -233,7 +421,29 @@ export default function LiveTaniConsultation({
         await videoRef.current.play().catch(() => {});
       }
 
-      // Connect to WebSocket Advisor
+      // Trigger first automatic camera vision inspection once video stream settles (1.8s)
+      initialVisionTimerRef.current = window.setTimeout(() => {
+        const firstFrame = captureCurrentVideoFrameBase64();
+        if (firstFrame) {
+          fetch("/api/live-vision-call", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageBase64: firstFrame,
+              question: "Amati apa yang terlihat pada kamera petani saat panggilan baru dimulai.",
+            }),
+          })
+            .then((r) => r.json())
+            .then((d) => {
+              if (d.visualObservation) {
+                setCameraObservation(d.visualObservation);
+              }
+            })
+            .catch(() => {});
+        }
+      }, 1800);
+
+      // Connect to WebSocket Advisor (/ws/live-tani)
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live-tani`);
       wsRef.current = ws;
@@ -271,43 +481,27 @@ export default function LiveTaniConsultation({
 
       // Stream 1 FPS JPEG video frames when connected
       frameIntervalRef.current = window.setInterval(() => {
-        if (
-          !isCameraActiveRef.current ||
-          !videoRef.current ||
-          !canvasRef.current ||
-          ws.readyState !== WebSocket.OPEN
-        ) {
-          return;
-        }
-        const video = videoRef.current;
-        if (video.videoWidth === 0 || video.videoHeight === 0) return;
+        const base64Jpeg = captureCurrentVideoFrameBase64();
+        if (!base64Jpeg) return;
 
-        const canvas = canvasRef.current;
-        canvas.width = 640;
-        canvas.height = Math.round((video.videoHeight / video.videoWidth) * 640);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-        const base64Jpeg = dataUrl.split(",")[1];
-        if (base64Jpeg) {
+        if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "video", data: base64Jpeg }));
           setFramesSent((prev) => prev + 1);
         }
-      }, 1000);
+      }, 1200);
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === "status" && data.status === "connected") {
             setAdvisorConnectionState("connected");
-            setAdvisorStatusNote("Terhubung dengan Penyuluh Pertanian (Suara & Visual)");
+            setAdvisorStatusNote("Terhubung dengan Pak Chandra (Suara & Penglihatan Kamera Aktif)");
+          } else if (data.type === "vision_observation" && data.text) {
+            setCameraObservation(data.text);
           } else if (data.type === "status" && data.status === "closed") {
-            setAdvisorConnectionState("local_only");
-            setAdvisorStatusNote(
-              "Preview kamera lokal aktif · Menunggu penyuluh terhubung kembali"
-            );
+            setAdvisorConnectionState("serverless_vision");
+            setAdvisorStatusNote("Mode Kamera Visual & Suara Aktif");
+            startServerlessSpeechRecognition();
           } else if (data.type === "audio" && data.audio) {
             setAdvisorConnectionState("connected");
             playAudioChunk24k(data.audio);
@@ -358,10 +552,10 @@ export default function LiveTaniConsultation({
               ];
             });
           } else if (data.type === "error") {
-            setAdvisorConnectionState("local_only");
-            setAdvisorStatusNote(
-              "Preview kamera lokal aktif · Koneksi dua arah penyuluh belum tersedia saat ini"
-            );
+            // Switch seamlessly to Serverless Vision & Voice Mode (e.g. on Vercel)
+            setAdvisorConnectionState("serverless_vision");
+            setAdvisorStatusNote("Terhubung via Kamera Visual & Suara Langsung");
+            startServerlessSpeechRecognition();
           }
         } catch {
           // ignore
@@ -369,10 +563,10 @@ export default function LiveTaniConsultation({
       };
 
       ws.onerror = () => {
-        setAdvisorConnectionState("local_only");
-        setAdvisorStatusNote(
-          "Preview kamera lokal aktif · Menunggu penyuluh terhubung"
-        );
+        // When deployed on Vercel Serverless, WebSocket upgrades fail -> activate Serverless Vision + Speech mode
+        setAdvisorConnectionState("serverless_vision");
+        setAdvisorStatusNote("Terhubung via Kamera Visual & Suara Langsung");
+        startServerlessSpeechRecognition();
       };
     } catch (err: any) {
       setCameraPermissionState("denied");
@@ -383,7 +577,7 @@ export default function LiveTaniConsultation({
     }
   };
 
-  // Auto-launch camera and microphone immediately on mount (No intermediate screen!)
+  // Auto-launch camera and microphone immediately on mount
   useEffect(() => {
     initializeLiveCameraAndCall(facingMode);
     return () => {
@@ -448,6 +642,8 @@ export default function LiveTaniConsultation({
           videoRef.current.srcObject = mediaStreamRef.current;
           await videoRef.current.play().catch(() => {});
         }
+        // Inspect new camera angle after flip
+        setTimeout(() => inspectCameraNow(), 1000);
       } catch {
         // Fallback if device only has a single camera
       }
@@ -481,13 +677,19 @@ export default function LiveTaniConsultation({
     <div className="fixed inset-0 z-50 h-dvh w-full bg-slate-950 text-white flex flex-col justify-between overflow-hidden select-none">
       {/* ================= LAYER 1: PREVIEW KAMERA UTAMA FULL SCREEN ================= */}
       <div className="absolute inset-0 w-full h-full bg-slate-950 flex items-center justify-center">
+        {/* PENTING: Gunakan opacity-100/opacity-0 alih-alih hidden agar browser selalu mendekode dimensi video untuk dikirim ke Pak Chandra */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className={`w-full h-full object-cover ${
-            cameraPermissionState === "granted" && isCameraActive ? "block" : "hidden"
+          onLoadedMetadata={() => {
+            videoRef.current?.play().catch(() => {});
+          }}
+          className={`w-full h-full object-cover transition-opacity duration-300 ${
+            cameraPermissionState === "granted" && isCameraActive
+              ? "opacity-100"
+              : "opacity-0 pointer-events-none"
           }`}
         />
         <canvas ref={canvasRef} className="hidden" />
@@ -552,54 +754,69 @@ export default function LiveTaniConsultation({
       </div>
 
       {/* ================= LAYER 2: HEADER TRANSPARAN DI BAGIAN ATAS ================= */}
-      <header className="relative z-20 px-4 sm:px-6 pt-4 pb-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-start justify-between gap-3">
-        {/* Tombol Kembali / Tutup */}
-        <button
-          type="button"
-          onClick={handleEndCall}
-          aria-label="Kembali"
-          className="w-10 h-10 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md border border-white/15 flex items-center justify-center text-white transition-colors cursor-pointer shrink-0"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
+      <header className="relative z-20 px-4 sm:px-6 pt-4 pb-6 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex flex-col gap-2.5">
+        <div className="flex items-start justify-between gap-3">
+          {/* Tombol Kembali / Tutup */}
+          <button
+            type="button"
+            onClick={handleEndCall}
+            aria-label="Kembali"
+            className="w-10 h-10 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md border border-white/15 flex items-center justify-center text-white transition-colors cursor-pointer shrink-0"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
 
-        {/* Judul LIVE VIDEO CALL & Status Panggilan Jujur */}
-        <div className="flex flex-col items-center text-center min-w-0">
-          <h1 className="text-sm sm:text-base font-extrabold tracking-wide font-display text-white drop-shadow-xs">
-            LIVE VIDEO CALL
-          </h1>
-          <div className="mt-1 px-3 py-1 rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-[11px] font-medium text-emerald-200">
-            {cameraPermissionState === "requesting" &&
-              "Memeriksa izin kamera & mikrofon..."}
-            {cameraPermissionState === "denied" &&
-              "Kamera belum aktif (Menunggu izin perangkat)"}
-            {cameraPermissionState === "granted" && advisorStatusNote}
+          {/* Judul LIVE VIDEO CALL & Status Panggilan */}
+          <div className="flex flex-col items-center text-center min-w-0">
+            <h1 className="text-sm sm:text-base font-extrabold tracking-wide font-display text-white drop-shadow-xs">
+              LIVE VIDEO CALL
+            </h1>
+            <div className="mt-1 px-3 py-1 rounded-full bg-black/50 backdrop-blur-md border border-white/15 text-[11px] font-medium text-emerald-200">
+              {cameraPermissionState === "requesting" &&
+                "Memeriksa izin kamera & mikrofon..."}
+              {cameraPermissionState === "denied" &&
+                "Kamera belum aktif (Menunggu izin perangkat)"}
+              {cameraPermissionState === "granted" && advisorStatusNote}
+            </div>
+          </div>
+
+          {/* Jendela Status Penyuluh */}
+          <div className="px-3 py-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/15 flex items-center gap-2 shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-emerald-700/80 flex items-center justify-center text-white">
+              <Leaf className="w-4 h-4" />
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-xs font-bold leading-none">Pak Chandra</p>
+              <p className="text-[10px] text-emerald-300 mt-0.5">
+                {advisorConnectionState === "connected"
+                  ? `Vision Aktif · ${framesSent} frame`
+                  : advisorConnectionState === "searching"
+                  ? "Menghubungkan..."
+                  : `Vision Aktif · ${framesSent} frame`}
+              </p>
+            </div>
           </div>
         </div>
 
-        {/* Jendela Status Penyuluh (Jujur, Tanpa Video Penyuluh Palsu) */}
-        <div className="px-3 py-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/15 flex items-center gap-2 shrink-0">
-          <div className="w-8 h-8 rounded-xl bg-emerald-700/80 flex items-center justify-center text-white">
-            <Leaf className="w-4 h-4" />
+        {/* Bar Penglihatan Kamera Real-time (Bukti Pak Chandra Melihat Kamera) */}
+        {cameraPermissionState === "granted" && isCameraActive && (
+          <div className="max-w-lg mx-auto w-full px-3.5 py-2 rounded-2xl bg-black/55 backdrop-blur-md border border-emerald-400/30 flex items-center justify-between gap-2.5 text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <Eye className="w-4 h-4 text-emerald-400 shrink-0" />
+              <p className="text-[11px] sm:text-xs text-emerald-100 truncate">
+                <span className="font-bold text-emerald-300">Penglihatan Pak Chandra: </span>
+                {cameraObservation}
+              </p>
+            </div>
           </div>
-          <div className="text-left hidden sm:block">
-            <p className="text-xs font-bold leading-none">Pak Chandra</p>
-            <p className="text-[10px] text-emerald-300 mt-0.5">
-              {advisorConnectionState === "connected"
-                ? `Suara Aktif · ${framesSent} frame`
-                : advisorConnectionState === "searching"
-                ? "Mencari penyuluh..."
-                : "Mode Preview Lokal"}
-            </p>
-          </div>
-        </div>
+        )}
       </header>
 
       {/* ================= LAYER 3: TRANSKRIP PERCAKAPAN MELAYANG & KONTROL BAWAH ================= */}
-      <div className="relative z-20 px-4 sm:px-6 pb-7 pt-6 bg-gradient-to-t from-black/90 via-black/55 to-transparent space-y-4">
+      <div className="relative z-20 px-4 sm:px-6 pb-7 pt-6 bg-gradient-to-t from-black/90 via-black/55 to-transparent space-y-3.5">
         {/* Subtitle Percakapan Langsung jika Ada */}
         {latestTranscript && (
-          <div className="max-w-lg mx-auto p-3.5 rounded-2xl bg-black/70 backdrop-blur-md border border-white/15 text-left">
+          <div className="max-w-lg mx-auto p-3.5 rounded-2xl bg-black/75 backdrop-blur-md border border-white/15 text-left">
             <div className="flex items-center justify-between text-[11px] text-emerald-300 mb-1">
               <span className="font-bold">
                 {latestTranscript.role === "petani"
@@ -608,19 +825,38 @@ export default function LiveTaniConsultation({
               </span>
               <span className="font-mono tabular-nums">{latestTranscript.timestamp}</span>
             </div>
-            <p className="text-xs sm:text-sm text-white leading-relaxed line-clamp-3">
+            <p className="text-xs sm:text-sm text-white leading-relaxed line-clamp-4">
               {latestTranscript.text}
             </p>
           </div>
         )}
 
-        {/* Indikator Level Mikrofon Saat Kamera Aktif */}
-        {cameraPermissionState === "granted" && (
-          <div className="flex items-center justify-center gap-2 text-xs text-slate-300 font-mono tabular-nums">
-            <span>
+        {/* Tombol Cepat: Minta Pak Chandra Periksa Tampilan Kamera Sekarang */}
+        {cameraPermissionState === "granted" && isCameraActive && (
+          <div className="flex flex-col items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => inspectCameraNow()}
+              disabled={isInspectingCamera}
+              className="px-4 py-2 rounded-full bg-emerald-600/90 hover:bg-emerald-500 active:scale-95 disabled:opacity-60 text-white border border-emerald-300/40 shadow-md backdrop-blur-md text-xs font-extrabold flex items-center gap-2 transition-all cursor-pointer"
+            >
+              {isInspectingCamera ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Pak Chandra Sedang Melihat Kamera Anda...</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Periksa Tampilan Kamera Sekarang</span>
+                </>
+              )}
+            </button>
+
+            <span className="text-[11px] text-slate-300 font-mono tabular-nums">
               {isMicMuted
                 ? "Mikrofon Nonaktif"
-                : `Mikrofon Aktif (${audioVolumeLevel}%)`}
+                : `Mikrofon Aktif (${audioVolumeLevel}%) · Silakan bicara atau arahkan kamera ke tanaman`}
             </span>
           </div>
         )}
